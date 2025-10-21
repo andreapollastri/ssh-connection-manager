@@ -37,6 +37,8 @@ show_help() {
     echo -e "${YELLOW}Tip:${NC} You can backup or manually edit connections at:"
     echo "  ~/.ssh_connections.conf"
     echo ""
+    echo -e "${YELLOW}Note:${NC} Saved passwords are copied to clipboard during connection (🔑)"
+    echo ""
 }
 
 # Function to list all connections
@@ -52,9 +54,13 @@ list_connections() {
     echo -e "${BLUE}=== SSH Servers List ===${NC}"
     echo ""
     
-    sort "$CONFIG_FILE" | while IFS='|' read -r alias user host port; do
+    sort "$CONFIG_FILE" | while IFS='|' read -r alias user host port password; do
         if [ -n "$alias" ]; then
-            echo -e "${GREEN}$alias${NC} - ${user}@${host}:${port}"
+            if [ -n "$password" ]; then
+                echo -e "${GREEN}$alias${NC} - ${user}@${host}:${port} ${YELLOW}🔑${NC}"
+            else
+                echo -e "${GREEN}$alias${NC} - ${user}@${host}:${port}"
+            fi
         fi
     done
     echo ""
@@ -95,12 +101,21 @@ add_connection() {
     read -p "Type port (default: 22): " port
     port=${port:-22}
     
+    # Request password (optional)
+    echo ""
+    echo -e "${YELLOW}Password (optional - will be copied to clipboard during connection):${NC}"
+    read -s -p "Type password (optional): " password
+    echo ""
+    
     # Save the connection
-    echo "$alias|$user|$host|$port" >> "$CONFIG_FILE"
+    echo "$alias|$user|$host|$port|$password" >> "$CONFIG_FILE"
     
     echo ""
     echo -e "${GREEN}✓ Connection '$alias' added successfully!${NC}"
     echo -e "  ${user}@${host}:${port}"
+    if [ -n "$password" ]; then
+        echo -e "  ${YELLOW}(password will be copied to clipboard on connect)${NC}"
+    fi
     echo ""
 }
 
@@ -124,11 +139,14 @@ remove_connection() {
     
     # Show connection details
     connection=$(grep "^$alias|" "$CONFIG_FILE")
-    IFS='|' read -r al user host port <<< "$connection"
+    IFS='|' read -r al user host port password <<< "$connection"
     
     echo -e "${YELLOW}You are about to remove:${NC}"
     echo -e "  Alias: ${GREEN}$al${NC}"
     echo -e "  Connection: ${user}@${host}:${port}"
+    if [ -n "$password" ]; then
+        echo -e "  ${YELLOW}(with saved password 🔑)${NC}"
+    fi
     echo ""
     
     # Ask for confirmation
@@ -185,10 +203,31 @@ connect_to() {
     fi
     
     # Extract details
-    IFS='|' read -r al user host port <<< "$connection"
+    IFS='|' read -r al user host port password <<< "$connection"
     
     echo -e "${GREEN}Connecting to $alias...${NC}"
     echo -e "  ${user}@${host}:${port}"
+    
+    # Copy password to clipboard if present
+    if [ -n "$password" ]; then
+        # Detect OS and copy to clipboard
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            echo -n "$password" | pbcopy
+            echo -e "  ${GREEN}✓ Password copied to clipboard!${NC}"
+        elif command -v xclip &> /dev/null; then
+            # Linux with xclip
+            echo -n "$password" | xclip -selection clipboard
+            echo -e "  ${GREEN}✓ Password copied to clipboard!${NC}"
+        elif command -v xsel &> /dev/null; then
+            # Linux with xsel
+            echo -n "$password" | xsel --clipboard --input
+            echo -e "  ${GREEN}✓ Password copied to clipboard!${NC}"
+        else
+            echo -e "  ${YELLOW}⚠  Cannot copy to clipboard (install xclip or xsel)${NC}"
+        fi
+    fi
+    
     echo ""
     
     # Execute SSH connection
@@ -216,7 +255,7 @@ reset_host() {
     fi
     
     # Extract host
-    IFS='|' read -r al user host port <<< "$connection"
+    IFS='|' read -r al user host port password <<< "$connection"
     
     echo -e "${YELLOW}Resetting SSH keys for:${NC}"
     echo -e "  Host: ${host}"
