@@ -140,6 +140,7 @@ The file uses the format: `alias|user|host|port`
 
 - macOS (or any Unix-like system)
 - Bash
+- GIT
 - SSH client installed
 - SSH key pair (`id_rsa`) properly configured and installed on remote servers
 

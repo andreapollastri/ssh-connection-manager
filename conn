@@ -30,7 +30,12 @@ show_help() {
     echo "  add                - Add a new connection"
     echo "  remove <alias>     - Remove an existing connection"
     echo "  reset <alias>      - Remove SSH host key for the specified alias"
+    echo "  key <action>       - Manage SSH keys (public|private|create)"
+    echo "  update             - Update the script to the latest version from GitHub"
     echo "  help               - Show this help message"
+    echo ""
+    echo -e "${YELLOW}Tip:${NC} You can backup or manually edit connections at:"
+    echo "  ~/.ssh_connections.conf"
     echo ""
 }
 
@@ -47,11 +52,11 @@ list_connections() {
     echo -e "${BLUE}=== SSH Servers List ===${NC}"
     echo ""
     
-    while IFS='|' read -r alias user host port; do
+    sort "$CONFIG_FILE" | while IFS='|' read -r alias user host port; do
         if [ -n "$alias" ]; then
             echo -e "${GREEN}$alias${NC} - ${user}@${host}:${port}"
         fi
-    done < "$CONFIG_FILE"
+    done
     echo ""
 }
 
@@ -151,6 +156,25 @@ connect_to() {
     
     alias="$1"
     
+    # Check if SSH key exists
+    SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+    if [ ! -f "$SSH_KEY_PATH" ]; then
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}⚠  SSH key not found!${NC}"
+        echo -e "${YELLOW}   Run 'conn key create' to generate a new key pair.${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        read -p "Do you want to continue anyway? (y/N): " confirm
+        if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+            echo -e "${YELLOW}Connection cancelled.${NC}"
+            return 0
+        fi
+        echo ""
+    fi
+    
+    # Check for updates
+    check_for_updates
+    
     # Search for the connection
     connection=$(grep "^$alias|" "$CONFIG_FILE" 2>/dev/null)
     
@@ -210,6 +234,201 @@ reset_host() {
     echo -e "${GREEN}✓ SSH keys reset for '$alias'!${NC}"
 }
 
+# Function to manage SSH keys
+manage_keys() {
+    SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+    SSH_PUB_KEY_PATH="$HOME/.ssh/id_rsa.pub"
+    
+    if [ -z "$1" ]; then
+        echo -e "${RED}Error: please specify an action!${NC}"
+        echo "Usage: conn key <public|private|create>"
+        return 1
+    fi
+    
+    action="$1"
+    
+    case "$action" in
+        public)
+            if [ ! -f "$SSH_PUB_KEY_PATH" ]; then
+                echo -e "${RED}Error: SSH public key not found!${NC}"
+                echo -e "${YELLOW}Run 'conn key create' to generate a new key pair.${NC}"
+                return 1
+            fi
+            
+            echo -e "${BLUE}=== SSH Public Key ===${NC}"
+            echo ""
+            cat "$SSH_PUB_KEY_PATH"
+            echo ""
+            echo -e "${YELLOW}Path:${NC} $SSH_PUB_KEY_PATH"
+            echo ""
+            ;;
+            
+        private)
+            if [ ! -f "$SSH_KEY_PATH" ]; then
+                echo -e "${RED}Error: SSH private key not found!${NC}"
+                echo -e "${YELLOW}Run 'conn key create' to generate a new key pair.${NC}"
+                return 1
+            fi
+            
+            echo -e "${BLUE}=== SSH Private Key ===${NC}"
+            echo ""
+            echo -e "${YELLOW}Warning: Keep this key secret!${NC}"
+            echo ""
+            cat "$SSH_KEY_PATH"
+            echo ""
+            echo -e "${YELLOW}Path:${NC} $SSH_KEY_PATH"
+            echo ""
+            ;;
+            
+        create)
+            if [ -f "$SSH_KEY_PATH" ]; then
+                echo -e "${YELLOW}SSH key already exists at: $SSH_KEY_PATH${NC}"
+                echo ""
+                read -p "Do you want to overwrite it? (y/N): " confirm
+                
+                if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+                    echo -e "${YELLOW}Operation cancelled.${NC}"
+                    echo ""
+                    echo -e "${BLUE}Showing existing public key:${NC}"
+                    echo ""
+                    cat "$SSH_PUB_KEY_PATH"
+                    echo ""
+                    return 0
+                fi
+            fi
+            
+            echo -e "${BLUE}=== Creating SSH Key Pair ===${NC}"
+            echo ""
+            
+            # Create .ssh directory if it doesn't exist
+            mkdir -p "$HOME/.ssh"
+            chmod 700 "$HOME/.ssh"
+            
+            # Generate SSH key
+            ssh-keygen -t rsa -b 4096 -f "$SSH_KEY_PATH" -N ""
+            
+            if [ $? -eq 0 ]; then
+                echo ""
+                echo -e "${GREEN}✓ SSH key pair created successfully!${NC}"
+                echo ""
+                echo -e "${BLUE}Your public key:${NC}"
+                echo ""
+                cat "$SSH_PUB_KEY_PATH"
+                echo ""
+                echo -e "${YELLOW}Path:${NC} $SSH_KEY_PATH"
+                echo ""
+            else
+                echo -e "${RED}Error: failed to create SSH key pair!${NC}"
+                return 1
+            fi
+            ;;
+            
+        *)
+            echo -e "${RED}Error: unknown action '$action'${NC}"
+            echo "Usage: conn key <public|private|create>"
+            return 1
+            ;;
+    esac
+}
+
+# Function to check for updates
+check_for_updates() {
+    REPO_URL="https://raw.githubusercontent.com/andreapollastri/ssh-connection-manager/main/conn"
+    
+    # Create temporary file
+    TMP_FILE=$(mktemp)
+    
+    # Download the remote version silently
+    if command -v curl &> /dev/null; then
+        curl -fsSL "$REPO_URL" -o "$TMP_FILE" 2>/dev/null
+    elif command -v wget &> /dev/null; then
+        wget -q "$REPO_URL" -O "$TMP_FILE" 2>/dev/null
+    else
+        rm -f "$TMP_FILE"
+        return 0
+    fi
+    
+    # Check if download was successful
+    if [ $? -ne 0 ] || [ ! -s "$TMP_FILE" ]; then
+        rm -f "$TMP_FILE"
+        return 0
+    fi
+    
+    # Find the script path
+    SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || greadlink -f "$0" 2>/dev/null || echo "$0")"
+    if [ "$SCRIPT_PATH" = "$0" ]; then
+        SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    fi
+    
+    # Compare files
+    if ! cmp -s "$SCRIPT_PATH" "$TMP_FILE"; then
+        echo ""
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}⚠  A new version of the script is available!${NC}"
+        echo -e "${YELLOW}   Run 'conn update' to update to the latest version.${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+    fi
+    
+    rm -f "$TMP_FILE"
+}
+
+# Function to update the script
+update_script() {
+    echo -e "${BLUE}=== Update SSH Connection Manager ===${NC}"
+    echo ""
+    
+    # GitHub repository URL
+    REPO_URL="https://raw.githubusercontent.com/andreapollastri/ssh-connection-manager/main/conn"
+    
+    # Find the script path
+    SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || greadlink -f "$0" 2>/dev/null || echo "$0")"
+    
+    # For macOS compatibility, use realpath alternative
+    if [ "$SCRIPT_PATH" = "$0" ]; then
+        SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    fi
+    
+    echo -e "Current script: ${YELLOW}$SCRIPT_PATH${NC}"
+    echo ""
+    
+    # Create temporary file
+    TMP_FILE=$(mktemp)
+    
+    echo "Downloading latest version from GitHub..."
+    
+    # Download the new version
+    if command -v curl &> /dev/null; then
+        curl -fsSL "$REPO_URL" -o "$TMP_FILE"
+    elif command -v wget &> /dev/null; then
+        wget -q "$REPO_URL" -O "$TMP_FILE"
+    else
+        echo -e "${RED}Error: neither curl nor wget is available!${NC}"
+        rm -f "$TMP_FILE"
+        return 1
+    fi
+    
+    # Check if download was successful
+    if [ $? -ne 0 ] || [ ! -s "$TMP_FILE" ]; then
+        echo -e "${RED}Error: failed to download the update!${NC}"
+        rm -f "$TMP_FILE"
+        return 1
+    fi
+    
+    # Backup current version
+    cp "$SCRIPT_PATH" "${SCRIPT_PATH}.backup"
+    
+    # Replace with new version
+    mv "$TMP_FILE" "$SCRIPT_PATH"
+    chmod +x "$SCRIPT_PATH"
+    
+    echo ""
+    echo -e "${GREEN}✓ Script updated successfully!${NC}"
+    echo -e "${YELLOW}Note: A backup of the previous version was saved to:${NC}"
+    echo "  ${SCRIPT_PATH}.backup"
+    echo ""
+}
+
 # Main script
 main() {
     if [ $# -eq 0 ]; then
@@ -235,6 +454,12 @@ main() {
             ;;
         reset)
             reset_host "$@"
+            ;;
+        key)
+            manage_keys "$@"
+            ;;
+        update)
+            update_script
             ;;
         help|--help|-h)
             show_help
