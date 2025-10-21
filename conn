@@ -52,18 +52,47 @@ list_connections() {
         return
     fi
     
-    echo -e "${BLUE}=== SSH Servers List ===${NC}"
+    echo ""
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║                          SSH SERVERS LIST                                  ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
+    # Print header
+    printf "  ${BLUE}%-20s${NC}  ${BLUE}%-25s${NC}  ${BLUE}%-20s${NC}  ${BLUE}%-6s${NC}\n" "ALIAS" "USER" "HOST" "PORT"
+    echo -e "  ${BLUE}────────────────────────────────────────────────────────────────────────────${NC}"
+    
+    # Print connections
     sort "$CONFIG_FILE" | while IFS='|' read -r alias user host port password; do
         if [ -n "$alias" ]; then
-            if [ -n "$password" ]; then
-                echo -e "${GREEN}$alias${NC} - ${user}@${host}:${port} ${YELLOW}🔑${NC}"
-            else
-                echo -e "${GREEN}$alias${NC} - ${user}@${host}:${port}"
+            # Truncate long values for better display
+            display_alias="$alias"
+            display_user="$user"
+            display_host="$host"
+            
+            if [ ${#display_alias} -gt 20 ]; then
+                display_alias="${display_alias:0:17}..."
             fi
+            if [ ${#display_user} -gt 25 ]; then
+                display_user="${display_user:0:22}..."
+            fi
+            if [ ${#display_host} -gt 20 ]; then
+                display_host="${display_host:0:17}..."
+            fi
+            
+            # Add lock icon if password exists
+            local pwd_icon=""
+            if [ -n "$password" ]; then
+                pwd_icon=" ${YELLOW}🔑${NC}"
+            fi
+            
+            printf "  ${GREEN}%-20s${NC}  %-25s  %-20s  ${YELLOW}%-6s${NC}${pwd_icon}\n" "$display_alias" "$display_user" "$display_host" "$port"
         fi
     done
+    
+    echo ""
+    echo -e "${BLUE}────────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${YELLOW}💡 Tip:${NC} Use ${GREEN}conn to <alias>${NC} to connect"
     echo ""
 }
 
