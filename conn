@@ -28,6 +28,7 @@ show_help() {
     echo "  to <alias>         - Connect to the server with the specified alias"
     echo "  list               - Show the list of all configured servers"
     echo "  add                - Add a new connection"
+    echo "  edit <alias>       - Edit an existing connection"
     echo "  remove <alias>     - Remove an existing connection"
     echo "  reset <alias>      - Remove SSH host key for the specified alias"
     echo "  key <action>       - Manage SSH keys (public|private|create)"
@@ -114,6 +115,93 @@ add_connection() {
     echo -e "${GREEN}✓ Connection '$alias' added successfully!${NC}"
     echo -e "  ${user}@${host}:${port}"
     if [ -n "$password" ]; then
+        echo -e "  ${YELLOW}(password will be copied to clipboard on connect)${NC}"
+    fi
+    echo ""
+}
+
+# Function to edit an existing connection
+edit_connection() {
+    init_config
+    
+    if [ -z "$1" ]; then
+        echo -e "${RED}Error: please specify an alias!${NC}"
+        echo "Usage: conn edit <alias>"
+        return 1
+    fi
+    
+    old_alias="$1"
+    
+    # Check if alias exists
+    if ! grep -q "^$old_alias|" "$CONFIG_FILE" 2>/dev/null; then
+        echo -e "${RED}Error: alias '$old_alias' does not exist!${NC}"
+        return 1
+    fi
+    
+    # Get current connection details
+    connection=$(grep "^$old_alias|" "$CONFIG_FILE")
+    IFS='|' read -r current_alias current_user current_host current_port current_password <<< "$connection"
+    
+    echo -e "${BLUE}=== Edit SSH Connection ===${NC}"
+    echo ""
+    echo -e "${YELLOW}Press Enter to keep the current value${NC}"
+    echo ""
+    
+    # Request new alias
+    read -p "Alias ($current_alias): " new_alias
+    new_alias=${new_alias:-$current_alias}
+    
+    # Check if new alias already exists (and it's different from the current one)
+    if [ "$new_alias" != "$current_alias" ] && grep -q "^$new_alias|" "$CONFIG_FILE" 2>/dev/null; then
+        echo -e "${RED}Error: alias '$new_alias' already exists!${NC}"
+        return 1
+    fi
+    
+    # Request new user
+    read -p "User ($current_user): " new_user
+    new_user=${new_user:-$current_user}
+    
+    # Request new host
+    read -p "Host ($current_host): " new_host
+    new_host=${new_host:-$current_host}
+    
+    # Request new port
+    read -p "Port ($current_port): " new_port
+    new_port=${new_port:-$current_port}
+    
+    # Request new password
+    echo ""
+    if [ -n "$current_password" ]; then
+        echo -e "${YELLOW}Password (current: ******, press Enter to keep, type 'REMOVE' to delete):${NC}"
+    else
+        echo -e "${YELLOW}Password (optional - will be copied to clipboard during connection):${NC}"
+    fi
+    read -s -p "Type password: " new_password
+    echo ""
+    
+    # Handle password
+    if [ -z "$new_password" ]; then
+        # Keep current password
+        new_password="$current_password"
+    elif [ "$new_password" = "REMOVE" ]; then
+        # Remove password
+        new_password=""
+    fi
+    
+    # Remove old connection
+    sed -i.bak "/^$old_alias|/d" "$CONFIG_FILE"
+    rm -f "${CONFIG_FILE}.bak"
+    
+    # Add updated connection
+    echo "$new_alias|$new_user|$new_host|$new_port|$new_password" >> "$CONFIG_FILE"
+    
+    echo ""
+    echo -e "${GREEN}✓ Connection updated successfully!${NC}"
+    if [ "$new_alias" != "$current_alias" ]; then
+        echo -e "  ${YELLOW}Alias changed: $current_alias → $new_alias${NC}"
+    fi
+    echo -e "  ${new_user}@${new_host}:${new_port}"
+    if [ -n "$new_password" ]; then
         echo -e "  ${YELLOW}(password will be copied to clipboard on connect)${NC}"
     fi
     echo ""
@@ -566,6 +654,9 @@ main() {
             ;;
         add)
             add_connection
+            ;;
+        edit)
+            edit_connection "$@"
             ;;
         remove)
             remove_connection "$@"
