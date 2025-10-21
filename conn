@@ -393,14 +393,31 @@ check_for_updates() {
         return 0
     fi
     
-    # Find the script path
-    SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || greadlink -f "$0" 2>/dev/null || echo "$0")"
-    if [ "$SCRIPT_PATH" = "$0" ]; then
-        SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    # Find the script path - use a more reliable method
+    if command -v realpath &> /dev/null; then
+        SCRIPT_PATH="$(realpath "$0" 2>/dev/null)"
+    elif command -v readlink &> /dev/null && readlink -f "$0" &> /dev/null 2>&1; then
+        SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null)"
+    elif command -v greadlink &> /dev/null; then
+        SCRIPT_PATH="$(greadlink -f "$0" 2>/dev/null)"
+    else
+        # Fallback - simpler method that doesn't cd
+        if [ -L "$0" ]; then
+            # It's a symlink, try to resolve it
+            SCRIPT_PATH="$(ls -l "$0" 2>/dev/null | awk '{print $NF}')"
+        else
+            SCRIPT_PATH="$0"
+        fi
+    fi
+    
+    # If we couldn't get a path, skip the check
+    if [ -z "$SCRIPT_PATH" ] || [ ! -f "$SCRIPT_PATH" ]; then
+        rm -f "$TMP_FILE"
+        return 0
     fi
     
     # Compare files
-    if ! cmp -s "$SCRIPT_PATH" "$TMP_FILE"; then
+    if ! cmp -s "$SCRIPT_PATH" "$TMP_FILE" 2>/dev/null; then
         echo ""
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo -e "${YELLOW}⚠  A new version of the script is available!${NC}"
@@ -420,16 +437,37 @@ update_script() {
     # GitHub repository URL
     REPO_URL="https://raw.githubusercontent.com/andreapollastri/ssh-connection-manager/main/conn"
     
-    # Find the script path
-    SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || greadlink -f "$0" 2>/dev/null || echo "$0")"
-    
-    # For macOS compatibility, use realpath alternative
-    if [ "$SCRIPT_PATH" = "$0" ]; then
-        SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    # Find the script path - use a more reliable method
+    if command -v realpath &> /dev/null; then
+        SCRIPT_PATH="$(realpath "$0")"
+    elif command -v readlink &> /dev/null && readlink -f "$0" &> /dev/null; then
+        SCRIPT_PATH="$(readlink -f "$0")"
+    elif command -v greadlink &> /dev/null; then
+        SCRIPT_PATH="$(greadlink -f "$0")"
+    else
+        # Fallback for macOS
+        SCRIPT_PATH="$( cd "$( dirname "$0" )" && pwd )/$(basename "$0")"
+        # If it's a symlink, resolve it
+        if [ -L "$0" ]; then
+            SCRIPT_PATH="$(ls -l "$0" | awk '{print $NF}')"
+            if [[ "$SCRIPT_PATH" != /* ]]; then
+                SCRIPT_PATH="$( cd "$( dirname "$0" )" && pwd )/$SCRIPT_PATH"
+            fi
+        fi
     fi
     
     echo -e "Current script: ${YELLOW}$SCRIPT_PATH${NC}"
     echo ""
+    
+    # Check if we need sudo
+    NEED_SUDO=false
+    SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+    
+    if [ ! -w "$SCRIPT_PATH" ] || [ ! -w "$SCRIPT_DIR" ]; then
+        NEED_SUDO=true
+        echo -e "${YELLOW}Note: This script is in a system directory and requires sudo.${NC}"
+        echo ""
+    fi
     
     # Create temporary file
     TMP_FILE=$(mktemp)
@@ -454,17 +492,58 @@ update_script() {
         return 1
     fi
     
-    # Backup current version
-    cp "$SCRIPT_PATH" "${SCRIPT_PATH}.backup"
+    # Check if there are actually changes
+    if cmp -s "$SCRIPT_PATH" "$TMP_FILE"; then
+        echo ""
+        echo -e "${GREEN}✓ Already up to date!${NC}"
+        rm -f "$TMP_FILE"
+        return 0
+    fi
     
-    # Replace with new version
-    mv "$TMP_FILE" "$SCRIPT_PATH"
-    chmod +x "$SCRIPT_PATH"
+    echo -e "${GREEN}✓ New version downloaded${NC}"
+    echo ""
+    
+    # Perform update
+    if [ "$NEED_SUDO" = true ]; then
+        echo "Installing update (requires sudo)..."
+        
+        # Backup current version
+        if ! sudo cp "$SCRIPT_PATH" "${SCRIPT_PATH}.backup" 2>/dev/null; then
+            echo -e "${RED}Error: failed to create backup!${NC}"
+            rm -f "$TMP_FILE"
+            return 1
+        fi
+        
+        # Replace with new version
+        if ! sudo cp "$TMP_FILE" "$SCRIPT_PATH" 2>/dev/null; then
+            echo -e "${RED}Error: failed to update script!${NC}"
+            rm -f "$TMP_FILE"
+            return 1
+        fi
+        
+        # Set permissions
+        sudo chmod +x "$SCRIPT_PATH"
+    else
+        # No sudo needed
+        # Backup current version
+        if ! cp "$SCRIPT_PATH" "${SCRIPT_PATH}.backup" 2>/dev/null; then
+            echo -e "${YELLOW}Warning: could not create backup${NC}"
+        fi
+        
+        # Replace with new version
+        cp "$TMP_FILE" "$SCRIPT_PATH"
+        chmod +x "$SCRIPT_PATH"
+    fi
+    
+    # Cleanup
+    rm -f "$TMP_FILE"
     
     echo ""
     echo -e "${GREEN}✓ Script updated successfully!${NC}"
-    echo -e "${YELLOW}Note: A backup of the previous version was saved to:${NC}"
-    echo "  ${SCRIPT_PATH}.backup"
+    if [ -f "${SCRIPT_PATH}.backup" ]; then
+        echo -e "${YELLOW}Note: A backup of the previous version was saved to:${NC}"
+        echo "  ${SCRIPT_PATH}.backup"
+    fi
     echo ""
 }
 
